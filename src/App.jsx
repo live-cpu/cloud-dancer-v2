@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import "./styles/cloud-dancer.css";
 import { API_BASE_URL } from "./config/api";
 
+import { buildContrastInfo } from "./contrastDictionary";
+
 // 이미지 Assets import
 import cloudBack from "./assets/cloud-back.jpg";
 import cloud1 from "./assets/cloud-1.png";
@@ -11,26 +13,6 @@ import cloud3 from "./assets/cloud-3.png";
 import mountain from "./assets/mountain.jpg";
 import tree1 from "./assets/tree-1.png";
 import tree2 from "./assets/tree-2.png";
-
-/** 사용자가 쓴 문장에서 "반대 결"의 키워드를 뽑아내는 간단한 매핑 */
-function getContrastWord(word = "") {
-  const pairs = [
-    ["하늘", "땅"],
-    ["sky", "ground"],
-    ["밝", "어두움"],
-    ["light", "shadow"],
-    ["물", "불"],
-    ["바다", "사막"],
-    ["고요", "소란"],
-    ["차분", "격렬"],
-    ["soft", "raw"],
-  ];
-
-  for (const [k, v] of pairs) {
-    if (word.includes(k)) return v;
-  }
-  return "다른 결의 키워드";
-}
 
 function App() {
   const [text, setText] = useState("");
@@ -105,9 +87,41 @@ function App() {
   }, [stage]);
 
   /* -----------------------------
-   * 3) 2페이지(inside)에 들어갔을 때
-   *    - 한 번은 “원래 문장으로” 검색 (closeResults)
-   *    - 한 번은 “반대 키워드로” 검색 (contrastResults)
+   * 3) 키워드 칩 & 반대 키워드 계산
+   * ----------------------------- */
+  const keywordChips = useMemo(() => {
+    const base = text.trim();
+    if (!base) {
+      return ["새벽 공기", "조용한 거리", "희미한 빛"];
+    }
+    const tokens = base
+      .split(/[\s,.\n]+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0)
+      .slice(0, 4);
+
+    if (tokens.length === 0) {
+      return ["새벽 공기", "조용한 거리", "희미한 빛"];
+    }
+    return tokens;
+  }, [text]);
+
+  // 사전 기준으로 primary / contrast 키워드 한 번 계산
+  const contrastInfoForView = useMemo(
+    () => buildContrastInfo(text, keywordChips),
+    [text, keywordChips]
+  );
+
+  const primaryKeyword =
+    contrastInfoForView.primaryKeyword ||
+    keywordChips[0] ||
+    "Cloud Dancer";
+  const contrastKeyword = contrastInfoForView.contrastKeyword;
+
+  /* -----------------------------
+   * 4) 2페이지(inside)에 들어갔을 때
+   *    - “근접 결” 검색 (closeResults)
+   *    - “반대 결” 검색 (contrastResults)
    * ----------------------------- */
   useEffect(() => {
     const base = text.trim();
@@ -118,9 +132,8 @@ function App() {
       return;
     }
 
-    // 여기서 전체 문장을 그대로 넣고,
-    // 반대 키워드용으로는 getContrastWord를 한 번 더 쓴다.
-    const contrastWord = getContrastWord(base);
+    // 문장 + 키워드칩을 기준으로, 어떤 쿼리를 보낼지 결정
+    const { closeQuery, contrastQuery } = buildContrastInfo(base, keywordChips);
 
     const closeController = new AbortController();
     const contrastController = new AbortController();
@@ -130,7 +143,7 @@ function App() {
         setLoadingClose(true);
         const res = await fetch(
           `${API_BASE_URL}/api/search-artists?query=${encodeURIComponent(
-            base
+            closeQuery
           )}`,
           { signal: closeController.signal }
         );
@@ -158,7 +171,7 @@ function App() {
 
         const res = await fetch(
           `${API_BASE_URL}/api/search-artists?query=${encodeURIComponent(
-            contrastWord
+            contrastQuery
           )}`,
           { signal: contrastController.signal }
         );
@@ -187,30 +200,7 @@ function App() {
       closeController.abort();
       contrastController.abort();
     };
-  }, [stage, text]);
-
-  /* -----------------------------
-   * 4) 키워드 칩 & 반대 키워드 계산
-   * ----------------------------- */
-  const keywordChips = useMemo(() => {
-    const base = text.trim();
-    if (!base) {
-      return ["새벽 공기", "조용한 거리", "희미한 빛"];
-    }
-    const tokens = base
-      .split(/[\s,.\n]+/)
-      .map((w) => w.trim())
-      .filter((w) => w.length > 0)
-      .slice(0, 4);
-
-    if (tokens.length === 0) {
-      return ["새벽 공기", "조용한 거리", "희미한 빛"];
-    }
-    return tokens;
-  }, [text]);
-
-  const primaryKeyword = keywordChips[0] || "Cloud Dancer";
-  const contrastKeyword = getContrastWord(text.trim() || primaryKeyword);
+  }, [stage, text, keywordChips]);
 
   // 가까운 작업의 대표 아티스트
   const mainArtist = closeResults[0] || null;
@@ -533,8 +523,8 @@ function App() {
                                 backgroundPosition: "center",
                               }
                             : undefined
-                        }
-                      />
+                      }
+                    />
                       <div className="cd-contrast-body">
                         <h4 className="cd-contrast-work-title">
                           {artist.title}
