@@ -220,3 +220,4 @@ export function buildContrastInfo(sentence, fallbackTokens = []) {
     contrastQuery: primaryKeyword,
   };
 }
+
