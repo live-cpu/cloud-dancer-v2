@@ -61,10 +61,15 @@ body {
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
-  pointer-events: none; /* 클릭 통과 */
-  transition: all 1.8s ease-out; /* 기본 전환 속도 */
+  pointer-events: none;
+  /* transform / opacity / filter만 부드럽게 전환 */
+  transition:
+    opacity 1.8s ease-out,
+    transform 1.8s ease-out,
+    filter 1.8s ease-out;
   will-change: transform, opacity;
 }
+
 
 /* 1. SKY & CLOUDS */
 .cd-bg-layer--sky {
@@ -135,12 +140,13 @@ body {
 /* [Inside]: 2페이지 진입 (고요한 구름 배경 상태) */
 .cd-root--stage-inside .cd-cloud-layer--1,
 .cd-root--stage-inside .cd-cloud-layer--2 {
-  transition: none;
+  /* transition: none;  ← 삭제 */
   transform: scale(1.1);
   filter: blur(4px);
   opacity: 0.4;
   animation: floatCloud 20s infinite alternate ease-in-out;
 }
+
 
 /* [Forest Visible]: 스크롤 내리면 구름 사라지고 산/나무 올라옴 */
 .cd-root--forest-visible .cd-cloud-layer {
@@ -644,4 +650,87 @@ body {
   object-fit: cover;
   display: block;
   border-radius: inherit;
+}
+
+/* =========================================
+   ERROR POPUP (MODAL)
+   ========================================= */
+
+/* =========================================
+   ERROR POPUP (MODAL) - FIXED & FORCED TOP
+   ========================================= */
+
+.cd-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2147483647; /* 브라우저 최대값: 무조건 맨 위에 뜸 */
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.cd-popup-box {
+  background: #ffffff;
+  width: 90%;
+  max-width: 380px;
+  padding: 32px 24px;
+  border-radius: 24px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  position: relative;
+  animation: scaleIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.cd-popup-title {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ef4444; /* 붉은색 */
+  letter-spacing: -0.02em;
+}
+
+.cd-popup-desc {
+  margin: 0 0 24px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #4b5563;
+  word-break: keep-all;
+}
+
+.cd-popup-btn {
+  background: #1f2937;
+  color: #ffffff;
+  border: none;
+  padding: 14px 0;
+  width: 100%;
+  border-radius: 16px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.2s;
+}
+
+.cd-popup-btn:hover {
+  background: #000000;
+  transform: translateY(-1px);
+}
+
+.cd-popup-btn:active {
+  transform: translateY(1px);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }

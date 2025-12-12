@@ -1,11 +1,10 @@
 // src/App.jsx
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import "./styles/cloud-dancer.css";
 import { API_BASE_URL } from "./config/api";
-
 import { buildContrastInfo } from "./contrastDictionary";
 
-// 이미지 Assets import
+// 이미지 Assets
 import cloudBack from "./assets/cloud-back.jpg";
 import cloud1 from "./assets/cloud-1.png";
 import cloud2 from "./assets/cloud-2.png";
@@ -16,178 +15,162 @@ import tree2 from "./assets/tree-2.png";
 
 function App() {
   const [text, setText] = useState("");
-  const [stage, setStage] = useState("idle"); // idle / typing / entering / inside
+  const [stage, setStage] = useState("idle");
   const [forestVisible, setForestVisible] = useState(false);
 
-  // ① “가까운 결” 검색 결과
   const [closeResults, setCloseResults] = useState([]);
   const [loadingClose, setLoadingClose] = useState(false);
 
-  // ② “반대 결(콘트라스트)” 검색 결과
   const [contrastResults, setContrastResults] = useState([]);
   const [loadingContrast, setLoadingContrast] = useState(false);
 
-  // DOM Refs
-  const rootRef = useRef(null); // 스크롤 컨테이너 제어용
-  const forestTriggerRef = useRef(null); // Contrast 섹션 감지용
+  // 에러 메시지 상태 (여기에 값이 있으면 팝업이 뜸)
+  const [globalError, setGlobalError] = useState("");
 
-  /* -----------------------------
-   * 1) 텍스트 유무에 따라 stage idle <-> typing
-   * ----------------------------- */
+  const rootRef = useRef(null);
+  const forestTriggerRef = useRef(null);
+  const lastSearchRef = useRef({ base: "", contrast: "" });
+
+  // -----------------------------------------------------------------
+  // [테스트용] 팝업 UI 확인용 코드
+  // 팝업이 잘 뜨는지 확인한 뒤에는 아래 useEffect 전체를 지우거나 주석 처리하세요.
+  // -----------------------------------------------------------------
+  /*
   useEffect(() => {
-    if (stage !== "idle" && stage !== "typing") return;
+    setGlobalError("테스트 에러입니다. 이 창이 보이면 팝업 기능은 정상입니다.");
+  }, []);
+  */
+  // -----------------------------------------------------------------
 
-    const hasText = text.trim().length > 0;
-    if (hasText && stage === "idle") {
-      setStage("typing");
-    }
-    if (!hasText && stage === "typing") {
-      setStage("idle");
-    }
-  }, [text, stage]);
 
-  /* -----------------------------
-   * 2) 2페이지에서 “다른 방향…” 섹션이 화면에 들어올 때만 forestVisible 토글
-   * ----------------------------- */
+  // [스크롤] 배경 전환 (구름 <-> 숲)
   useEffect(() => {
-    if (stage !== "inside") {
-      setForestVisible(false);
-      return;
-    }
+    if (!forestTriggerRef.current || !rootRef.current) return;
 
-    const triggerEl = forestTriggerRef.current;
-    if (!triggerEl) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        // 스크롤 내려서 트리거가 보이면 true(숲), 다시 올리면 false(구름)
+        setForestVisible(entry.isIntersecting);
+      },
+      {
+        root: rootRef.current, 
+        threshold: 0.1, 
+      }
+    );
 
-    let observer;
-    const timer = setTimeout(() => {
-      observer = new IntersectionObserver(
-        (entries) => {
-          const entry = entries[0];
-          if (!entry) return;
-
-          if (entry.isIntersecting) {
-            setForestVisible(true); // 산/나무 ON
-          } else {
-            setForestVisible(false); // 다시 구름으로 복귀
-          }
-        },
-        {
-          threshold: 0.15,
-          rootMargin: "0px 0px -120px 0px",
-        }
-      );
-
-      observer.observe(triggerEl);
-    }, 400);
-
-    return () => {
-      clearTimeout(timer);
-      if (observer && triggerEl) observer.unobserve(triggerEl);
-    };
+    observer.observe(forestTriggerRef.current);
+    return () => observer.disconnect();
   }, [stage]);
 
-  /* -----------------------------
-   * 3) 키워드 칩 & 반대 키워드 계산
-   * ----------------------------- */
-  const keywordChips = useMemo(() => {
-    const base = text.trim();
-    if (!base) {
-      return ["새벽 공기", "조용한 거리", "희미한 빛"];
-    }
-    const tokens = base
-      .split(/[\s,.\n]+/)
-      .map((w) => w.trim())
-      .filter((w) => w.length > 0)
-      .slice(0, 4);
 
-    if (tokens.length === 0) {
-      return ["새벽 공기", "조용한 거리", "희미한 빛"];
-    }
-    return tokens;
-  }, [text]);
+  // [스테이지] 텍스트 입력 감지
+  useEffect(() => {
+    const trimmed = text.trim();
+    if (stage === "entering" || stage === "inside") return;
+    setStage(trimmed.length > 0 ? "typing" : "idle");
+  }, [text, stage]);
 
-  // 사전 기준으로 primary / contrast 키워드 한 번 계산
-  const contrastInfoForView = useMemo(
-    () => buildContrastInfo(text, keywordChips),
-    [text, keywordChips]
-  );
 
-  const primaryKeyword =
-    contrastInfoForView.primaryKeyword ||
-    keywordChips[0] ||
-    "Cloud Dancer";
-  const contrastKeyword = contrastInfoForView.contrastKeyword;
+  // [API] 키워드 분석 및 호출
+  const contrastInfo = useMemo(() => buildContrastInfo(text) || {}, [text]);
+  const { primaryKeyword = "", contrastKeyword = "", keywordChips = [] } = contrastInfo;
 
-  /* -----------------------------
-   * 4) 2페이지(inside)에 들어갔을 때
-   *    - “근접 결” 검색 (closeResults)
-   *    - “반대 결” 검색 (contrastResults)
-   * ----------------------------- */
+  const getContrastWord = useCallback((base) => {
+    return contrastInfo.getContrastWord ? contrastInfo.getContrastWord(base) : base;
+  }, [contrastInfo]);
+
   useEffect(() => {
     const base = text.trim();
-
     if (stage !== "inside" || !base) {
       setCloseResults([]);
       setContrastResults([]);
+      lastSearchRef.current = { base: "", contrast: "" };
       return;
     }
 
-    // 문장 + 키워드칩을 기준으로, 어떤 쿼리를 보낼지 결정
-    const { closeQuery, contrastQuery } = buildContrastInfo(base, keywordChips);
+    const contrastWord = getContrastWord(base);
+    if (lastSearchRef.current.base === base && lastSearchRef.current.contrast === contrastWord) return;
+
+    lastSearchRef.current = { base, contrast: contrastWord };
+    setGlobalError(""); // 새 검색 시 에러 초기화
 
     const closeController = new AbortController();
     const contrastController = new AbortController();
 
+    // 1. 메인 검색 (비슷한 결)
     async function fetchClose() {
       try {
         setLoadingClose(true);
-        const res = await fetch(
-          `${API_BASE_URL}/api/search-artists?query=${encodeURIComponent(
-            closeQuery
-          )}`,
-          { signal: closeController.signal }
-        );
-
+        const url = `${API_BASE_URL}/api/search-artists?query=${encodeURIComponent(base)}`;
+        
+        const res = await fetch(url, { signal: closeController.signal });
+        
         if (!res.ok) {
-          console.error("search-artists(close) HTTP error", res.status);
-          setCloseResults([]);
-          return;
+           if (res.status === 429) {
+             setGlobalError("하루 검색 허용량을 초과했습니다.\n(내일 다시 이용해 주세요)");
+             return;
+           }
+           const errData = await res.json().catch(() => ({}));
+           // 구글 쿼터 에러 명시적 처리
+           if (errData?.error === "google_quota" || errData?.message?.includes("quota")) {
+               setGlobalError("오늘 검색 가능한 횟수를 모두 사용했습니다.\n내일 다시 시도해 주세요.");
+               return;
+           }
+           setGlobalError(errData?.message || "서버 연결에 실패했습니다.");
+           return;
         }
 
         const data = await res.json();
+
+        // 200 OK라도 에러 객체가 오는 경우 처리
+        if (data.error?.type === "google_quota") {
+            setGlobalError("오늘 검색 가능한 횟수를 모두 사용했습니다.\n(Quota Exceeded)");
+            setCloseResults([]);
+            return;
+        }
+
         setCloseResults(data.results || []);
       } catch (err) {
         if (err.name !== "AbortError") {
-          console.error("search-artists(close) error:", err);
+          console.error(err);
+          setGlobalError("네트워크 오류가 발생했습니다.");
         }
       } finally {
         setLoadingClose(false);
       }
     }
 
+    // 2. 대비 검색 (반대 결)
     async function fetchContrast() {
       try {
         setLoadingContrast(true);
-
-        const res = await fetch(
-          `${API_BASE_URL}/api/search-artists?query=${encodeURIComponent(
-            contrastQuery
-          )}`,
-          { signal: contrastController.signal }
-        );
-
-        if (!res.ok) {
-          console.error("search-artists(contrast) HTTP error", res.status);
-          setContrastResults([]);
+        const queryForContrast = contrastWord || base;
+        if (queryForContrast === base) {
+          setLoadingContrast(false);
           return;
         }
 
+        const url = `${API_BASE_URL}/api/search-artists?query=${encodeURIComponent(queryForContrast)}`;
+        const res = await fetch(url, { signal: contrastController.signal });
+
+        if (!res.ok) {
+            // 메인이 성공했으면 여기서는 조용히 넘어가거나 로그만 찍음
+            if (res.status === 429) {
+               // 둘 다 429면 메인에서 잡히므로 패스, 혹은 안전장치
+            }
+            return;
+        }
         const data = await res.json();
+        
+        if (data.error?.type === "google_quota") {
+            // 대비 검색에서 쿼터가 터져도 사용자에게 알려줌
+            setGlobalError((prev) => prev || "오늘 검색 허용량을 모두 사용했습니다.");
+            return;
+        }
         setContrastResults(data.results || []);
       } catch (err) {
-        if (err.name !== "AbortError") {
-          console.error("search-artists(contrast) error:", err);
-        }
+        if (err.name !== "AbortError") console.error(err);
       } finally {
         setLoadingContrast(false);
       }
@@ -200,112 +183,91 @@ function App() {
       closeController.abort();
       contrastController.abort();
     };
-  }, [stage, text, keywordChips]);
+  }, [stage, text, getContrastWord]);
 
-  // 가까운 작업의 대표 아티스트
+
+  // 렌더링용 변수
   const mainArtist = closeResults[0] || null;
-  // 반대 결의 작업들
-  const contrastHero = contrastResults[0] || null;
-  const contrastCards = contrastResults.slice(0, 3);
+  let contrastHero = null;
+  let contrastCards = [];
 
-  /* -----------------------------
-   * 5) 진입 애니메이션 핸들러
-   * ----------------------------- */
+  if (contrastKeyword && contrastResults.length > 0) {
+    let contrastHeroIndex = 0;
+    let contrastCardsStartIndex = 1;
+    if (mainArtist && contrastResults.length > 1 && contrastResults[0].link === mainArtist.link) {
+      contrastHeroIndex = 1;
+      contrastCardsStartIndex = 2;
+    }
+    contrastHero = contrastResults[contrastHeroIndex] || null;
+    contrastCards = contrastResults.slice(contrastCardsStartIndex, contrastCardsStartIndex + 3);
+  } else if (!contrastKeyword) {
+    const list = closeResults.slice(1);
+    contrastHero = list[0] || null;
+    contrastCards = list.slice(1, 4);
+  }
+
   const handleEnter = () => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!text.trim()) return;
     if (stage === "entering" || stage === "inside") return;
-
+    setGlobalError("");
     setStage("entering");
-
     setTimeout(() => {
       setStage("inside");
-      if (rootRef.current) {
-        rootRef.current.scrollTo({ top: 0, behavior: "instant" });
-      }
+      if (rootRef.current) rootRef.current.scrollTo({ top: 0, behavior: "instant" });
     }, 1500);
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    handleEnter();
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleEnter();
-    }
-  };
-
-  /* -----------------------------
-   * 6) 로고 클릭 → 1페이지로 돌아가기
-   * ----------------------------- */
   const handleLogoClick = () => {
-    if (rootRef.current) {
-      rootRef.current.scrollTo({ top: 0, behavior: "smooth" });
-    }
-
+    if (rootRef.current) rootRef.current.scrollTo({ top: 0, behavior: "smooth" });
     if (stage === "idle" || stage === "typing") return;
-
-    const hasText = text.trim().length > 0;
     setForestVisible(false);
-    setStage(hasText ? "typing" : "idle");
+    setStage(text.trim().length > 0 ? "typing" : "idle");
+    setGlobalError("");
+    lastSearchRef.current = { base: "", contrast: "" };
   };
 
-  // CSS 클래스 조합
   const rootClassName = [
     "cd-root",
     `cd-root--stage-${stage}`,
     forestVisible ? "cd-root--forest-visible" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  ].filter(Boolean).join(" ");
 
   return (
     <div className={rootClassName} ref={rootRef}>
-      {/* ================= BACKGROUND LAYERS ================= */}
+      
+      {/* 🔴 [팝업] 에러 발생 시 무조건 최상단 노출 */}
+      {globalError && (
+        <div className="cd-popup-overlay">
+          <div className="cd-popup-box">
+            <h3 className="cd-popup-title">알림</h3>
+            <p className="cd-popup-desc">
+                {globalError.split('\n').map((line, i) => (
+                    <React.Fragment key={i}>
+                        {line}
+                        <br />
+                    </React.Fragment>
+                ))}
+            </p>
+            <button className="cd-popup-btn" onClick={() => setGlobalError("")}>
+              확인
+            </button>
+          </div>
+        </div>
+      )}
 
-      {/* 1. 하늘/구름 레이어 (고정 배경) */}
-      <div
-        className="cd-bg-layer cd-bg-layer--sky"
-        style={{ backgroundImage: `url(${cloudBack})` }}
-      />
-      <div
-        className="cd-bg-layer cd-cloud-layer cd-cloud-layer--1"
-        style={{ backgroundImage: `url(${cloud1})` }}
-      />
-      <div
-        className="cd-bg-layer cd-cloud-layer cd-cloud-layer--2"
-        style={{ backgroundImage: `url(${cloud2})` }}
-      />
-      <div
-        className="cd-bg-layer cd-cloud-layer cd-cloud-layer--3"
-        style={{ backgroundImage: `url(${cloud3})` }}
-      />
+      {/* 배경 레이어들 */}
+      <div className="cd-bg-layer cd-bg-layer--sky" style={{ backgroundImage: `url(${cloudBack})` }} />
+      <div className="cd-bg-layer cd-cloud-layer cd-cloud-layer--1" style={{ backgroundImage: `url(${cloud1})` }} />
+      <div className="cd-bg-layer cd-cloud-layer cd-cloud-layer--2" style={{ backgroundImage: `url(${cloud2})` }} />
+      <div className="cd-bg-layer cd-cloud-layer cd-cloud-layer--3" style={{ backgroundImage: `url(${cloud3})` }} />
 
-      {/* 2. 산/나무 레이어 (Forest Visible 시 등장) */}
-      <div
-        className="cd-bg-layer cd-forest-layer cd-forest-layer--mountain"
-        style={{ backgroundImage: `url(${mountain})` }}
-      />
-      <div
-        className="cd-bg-layer cd-forest-layer cd-forest-layer--tree1"
-        style={{ backgroundImage: `url(${tree1})` }}
-      />
-      <div
-        className="cd-bg-layer cd-forest-layer cd-forest-layer--tree2"
-        style={{ backgroundImage: `url(${tree2})` }}
-      />
+      <div className="cd-bg-layer cd-forest-layer cd-forest-layer--mountain" style={{ backgroundImage: `url(${mountain})` }} />
+      <div className="cd-bg-layer cd-forest-layer cd-forest-layer--tree1" style={{ backgroundImage: `url(${tree1})` }} />
+      <div className="cd-bg-layer cd-forest-layer cd-forest-layer--tree2" style={{ backgroundImage: `url(${tree2})` }} />
 
-      {/* ================= CONTENT SHELL ================= */}
       <div className="cd-shell">
         <header className="cd-header">
-          <button
-            type="button"
-            className="cd-logo-block"
-            onClick={handleLogoClick}
-          >
+          <button type="button" className="cd-logo-block" onClick={handleLogoClick}>
             <div className="cd-logo-mark" />
             <div className="cd-logo-text">
               <span className="cd-logo-title">CLOUD DANCER</span>
@@ -314,34 +276,22 @@ function App() {
           </button>
         </header>
 
-        {/* --- PAGE 1: HERO & INPUT --- */}
         {stage !== "inside" && (
           <main className="cd-main cd-main--hero">
-            <section
-              className={`cd-polaroid ${
-                stage === "entering" ? "cd-polaroid--exit" : ""
-              }`}
-            >
+            <section className={`cd-polaroid ${stage === "entering" ? "cd-polaroid--exit" : ""}`}>
               <div className="cd-polaroid-frame">
                 <div className="cd-polaroid-image-slot" />
-                <form className="cd-polaroid-caption" onSubmit={handleSubmit}>
-                  <label className="cd-caption-label" htmlFor="feelings">
-                    Write your mind
-                  </label>
+                <form className="cd-polaroid-caption" onSubmit={(e) => { e.preventDefault(); handleEnter(); }}>
+                  <label className="cd-caption-label">Write your mind</label>
                   <textarea
-                    id="feelings"
                     className="cd-caption-textarea"
                     rows={4}
                     placeholder="지금 머릿속에 맴도는 문장을 짧게 적어보세요."
                     value={text}
                     onChange={(e) => setText(e.target.value)}
-                    onKeyDown={handleKeyDown}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleEnter(); } }}
                   />
-                  <button
-                    type="submit"
-                    className="cd-btn-primary"
-                    disabled={!text.trim()}
-                  >
+                  <button type="submit" className="cd-btn-primary" disabled={!text.trim()}>
                     구름 속으로 보내기
                   </button>
                 </form>
@@ -350,88 +300,44 @@ function App() {
           </main>
         )}
 
-        {/* --- PAGE 2: RESULT & CONTRAST --- */}
         {stage === "inside" && (
           <main className="cd-main cd-main--inside">
-            {/* 상단: 정서적으로 가까운 작업 */}
+            {/* 상단 (구름) */}
             <section className="cd-inside-panel cd-inside-panel--primary">
-              {/* 왼쪽: 키워드 팔레트 */}
               <aside className="cd-palette-panel">
                 <p className="cd-palette-label">FROM YOUR WORDS</p>
                 <ul className="cd-palette-list">
-                  {keywordChips.map((kw, index) => (
-                    <li key={index} className="cd-palette-chip">
+                  {keywordChips.map((kw, i) => (
+                    <li key={i} className="cd-palette-chip">
                       <span className="cd-palette-chip-swatch" />
                       <span className="cd-palette-chip-text">{kw}</span>
                     </li>
                   ))}
                 </ul>
-                <p className="cd-palette-note">
-                  이 단어들의 결과 닮은 디자이너와 작가들을 천천히 연결해
-                  드립니다.
-                </p>
+                <p className="cd-palette-note">이 단어들의 결과 닮은 디자이너와 작가들을 천천히 연결해 드립니다.</p>
               </aside>
 
-              {/* 가운데: 추천 작품 메인 이미지 */}
               <div className="cd-inside-center">
                 {mainArtist ? (
-                  <a
-                    className="cd-inside-work-link"
-                    href={mainArtist.link}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <div
-                      className="cd-inside-work-image cd-inside-work-image--photo"
-                      style={
-                        mainArtist.image
-                          ? {
-                              backgroundImage: `url(${mainArtist.image})`,
-                            }
-                          : undefined
-                      }
-                    />
-                  </a>
+                   <a className="cd-inside-work-link" href={mainArtist.link} target="_blank" rel="noreferrer">
+                    <div className="cd-inside-work-image cd-inside-work-image--photo" style={mainArtist.image ? { backgroundImage: `url(${mainArtist.image})` } : undefined} />
+                   </a>
                 ) : (
-                  <div className="cd-inside-work-image" />
+                   <div className="cd-inside-work-image" />
                 )}
               </div>
 
-              {/* 오른쪽: 사용자 문장 + 가까운 아티스트 설명 */}
               <div className="cd-inside-right">
                 <p className="cd-inside-eyebrow">지금의 시간</p>
                 <h2 className="cd-inside-title">당신이 보낸 문장</h2>
-                <p className="cd-inside-usertext">“{text}”</p>
-
+                <p className="cd-inside-usertext">"{text}"</p>
                 <div className="cd-inside-artist">
                   <p className="cd-artist-label">비슷한 결을 가진 아티스트</p>
-
-                  {loadingClose && (
-                    <p className="cd-artist-loading">
-                      작가를 찾는 중입니다…
-                    </p>
-                  )}
-
-                  {!loadingClose && !mainArtist && (
-                    <p className="cd-artist-desc">
-                      아직 검색된 작가가 없습니다. 문장에 조금 더 단서를
-                      넣어보면 좋을 것 같습니다.
-                    </p>
-                  )}
-
+                  {loadingClose && <p className="cd-artist-loading">작가를 찾는 중입니다…</p>}
+                  {!loadingClose && !mainArtist && <p className="cd-artist-desc">검색 결과가 없습니다.</p>}
                   {mainArtist && (
                     <>
                       <h3 className="cd-artist-name">{mainArtist.title}</h3>
-                      {mainArtist.source && (
-                        <a
-                          className="cd-artist-link"
-                          href={mainArtist.link}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {mainArtist.source}
-                        </a>
-                      )}
                       <p className="cd-artist-desc">{mainArtist.snippet}</p>
                     </>
                   )}
@@ -439,99 +345,39 @@ function App() {
               </div>
             </section>
 
-            {/* 하단: Contrast Section (스크롤 트리거) */}
+            {/* 트리거 존 */}
             <div ref={forestTriggerRef} className="cd-trigger-zone" />
 
+            {/* 하단 (숲) */}
             <section className="cd-inside-panel cd-inside-panel--contrast">
-              <h2 className="cd-inside-subtitle">
-                다른 방향에서 균형을 잡아줄 작업들
-              </h2>
+              <h2 className="cd-inside-subtitle">다른 방향에서 균형을 잡아줄 작업들</h2>
               <p className="cd-inside-intro">
-                “{primaryKeyword}”라는 단어에서 출발했지만, 아래 작업들은{" "}
-                “{contrastKeyword}”에 더 가까운 결을 가지고 있습니다. 때로는
-                반대편의 온도가 마음의 수평을 맞춰 줍니다.
+                {contrastKeyword ? `"${primaryKeyword}" ↔ "${contrastKeyword}"` : "다른 결의 작업들"}
               </p>
 
-              {/* 상단 큰 카드: 대비 키워드 소개 */}
               <div className="cd-contrast-hero">
-                <a
-                  className="cd-contrast-hero-link"
-                  href={contrastHero?.link || "#"}
-                  target={contrastHero ? "_blank" : "_self"}
-                  rel={contrastHero ? "noreferrer" : undefined}
-                  onClick={(e) => {
-                    if (!contrastHero) e.preventDefault();
-                  }}
-                >
-                  <div
-                    className="cd-contrast-hero-image"
-                    style={
-                      contrastHero?.image
-                        ? {
-                            backgroundImage: `url(${contrastHero.image})`,
-                            backgroundSize: "cover",
-                            backgroundPosition: "center",
-                          }
-                        : undefined
-                    }
-                  />
-                </a>
-                <div className="cd-contrast-hero-text">
-                  <p className="cd-contrast-label">CONTRAST KEYWORD</p>
-                  <h3 className="cd-contrast-artist-name-main">
-                    {primaryKeyword} ↔ {contrastKeyword}
-                  </h3>
-                  <p className="cd-contrast-artist-meta">
-                    첫 번째 카드는 “{contrastKeyword}” 쪽으로 기운 작업을
-                    대표로 보여줍니다. 이미지를 클릭하면 원본 사이트에서 더
-                    많은 정보를 볼 수 있습니다.
-                  </p>
-                </div>
+                  <a 
+                    className="cd-contrast-hero-link"
+                    href={contrastHero?.link || "#"}
+                    target={contrastHero ? "_blank" : "_self"}
+                    rel={contrastHero ? "noreferrer" : undefined}
+                    onClick={(e) => { if (!contrastHero) e.preventDefault(); }}
+                  >
+                    <div className="cd-contrast-hero-image" style={contrastHero?.image ? { backgroundImage: `url(${contrastHero.image})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined} />
+                  </a>
+                  <div className="cd-contrast-hero-text">
+                      <p className="cd-contrast-label">CONTRAST KEYWORD</p>
+                      <h3 className="cd-contrast-artist-name-main">{contrastHero?.title || "Searching..."}</h3>
+                  </div>
               </div>
-
-              {/* 서브 작업 카드들: contrastCards */}
+              
               <div className="cd-contrast-grid">
-                {loadingContrast && (
-                  <div className="cd-contrast-empty">
-                    반대 결의 작업들을 찾는 중입니다…
-                  </div>
-                )}
-
-                {!loadingContrast && contrastCards.length === 0 && (
-                  <div className="cd-contrast-empty">
-                    아직 대비되는 작업을 찾지 못했습니다. 문장을 조금 달리
-                    적어 보면 새로운 연결이 생길 수 있습니다.
-                  </div>
-                )}
-
-                {!loadingContrast &&
-                  contrastCards.map((artist, i) => (
-                    <a
-                      key={artist.link || i}
-                      className="cd-contrast-card"
-                      href={artist.link}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <div
-                        className="cd-contrast-image"
-                        style={
-                          artist.image
-                            ? {
-                                backgroundImage: `url(${artist.image})`,
-                                backgroundSize: "cover",
-                                backgroundPosition: "center",
-                              }
-                            : undefined
-                      }
-                    />
-                      <div className="cd-contrast-body">
-                        <h4 className="cd-contrast-work-title">
-                          {artist.title}
-                        </h4>
-                        <p className="cd-artist-desc">{artist.snippet}</p>
-                      </div>
-                    </a>
+                  {loadingContrast && <div>Loading...</div>}
+                  {!loadingContrast && contrastCards.map((card, i) => (
+                      <a key={i} className="cd-contrast-card" href={card.link} target="_blank" rel="noreferrer">
+                          <div className="cd-contrast-image" style={card.image ? {backgroundImage: `url(${card.image})`} : undefined} />
+                          <h4 className="cd-contrast-work-title">{card.title}</h4>
+                      </a>
                   ))}
               </div>
             </section>
@@ -543,4 +389,3 @@ function App() {
 }
 
 export default App;
-

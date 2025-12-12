@@ -2,14 +2,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ command, mode }) => {
+  const isProd = command === "build" || mode === "production";
 
-  // GitHub Pages용 베이스 경로 (레포 이름과 동일)
-  base: "/cloud-dancer-v2/",
-
-  // 빌드 결과를 docs 폴더에 넣어서 Pages에서 바로 쓸 수 있게
-  build: {
-    outDir: "docs",
-  },
+  return {
+    plugins: [react()],
+    base: isProd ? "/cloud-dancer-v2/" : "/",  // ← dev 에서는 "/"
+    build: {
+      outDir: "docs",
+    },
+  };
 });

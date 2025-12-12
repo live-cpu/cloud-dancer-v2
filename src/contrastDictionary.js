@@ -1,10 +1,5 @@
 // src/contrastDictionary.js
 
-// 기본 반대어 DB
-// - ko: 문장 안에서 찾을 기준 단어 (한국어)
-// - antonym: '반대 결'로 보여 줄 단어
-// - antonym2: 보조 반대어(있으면)
-// - en: 이 쪽 계열을 설명하는 간단한 영어 키워드 (검색용/분위기용)
 export const CONTRAST_DB = [
   // --- 자연/공간 계열 ---
   { ko: "하늘", antonym: "땅", antonym2: "아래", en: "sky" },
@@ -141,15 +136,10 @@ export const CONTRAST_DB = [
   { ko: "푸르다", antonym: "붉다", antonym2: "노랗다", en: "blue" },
 ];
 
-// 내부 유틸: 공백 제거용
 function normalize(text) {
   return (text || "").replace(/\s+/g, "").trim();
 }
 
-/**
- * 문장에서 사전에 있는 "기준 단어(ko)"를 하나 골라서 돌려준다.
- * - 여러 개가 겹치면 글자 수가 긴 것(좀 더 구체적인 것)을 우선.
- */
 export function pickMainKeywordFromSentence(sentence) {
   const raw = (sentence || "").trim();
   if (!raw) return null;
@@ -169,55 +159,45 @@ export function pickMainKeywordFromSentence(sentence) {
 }
 
 /**
- * 문장 + 키워드 칩 기반으로:
- * - primaryKeyword: 화면 상단에 "지금의 단어"로 보여줄 기준 단어
- * - contrastKeyword: 아래 섹션에 쓸 "반대 결" 키워드
- * - closeQuery: 가까운 결 검색에 쓸 쿼리 문자열
- * - contrastQuery: 반대 결 검색에 쓸 쿼리 문자열
- *
- * 여기서 핵심:
- *  - 사전에 있는 단어를 찾으면,
- *    가까운 검색은 "대표 단어(ko + en)"로,
- *    반대 검색은 "반대어(antonym + en)"로 보냄.
+ * 🔥 핵심: App.jsx와 호환되도록 수정
+ * - getContrastWord 함수 추가
+ * - keywordChips 생성 로직 추가
  */
-export function buildContrastInfo(sentence, fallbackTokens = []) {
+export function buildContrastInfo(sentence) {
   const raw = (sentence || "").trim();
   const entry = pickMainKeywordFromSentence(raw);
 
   if (entry) {
     const primaryKeyword = entry.ko;
-    const contrastKeyword =
-      entry.antonym || entry.antonym2 || "다른 결의 키워드";
+    const contrastKeyword = entry.antonym || entry.antonym2 || "";
 
-    // ✅ 가까운 검색: 대표 단어 위주 (문장 전체 X)
-    let closeQuery = entry.ko;
-    if (entry.en) {
-      closeQuery = `${entry.ko} ${entry.en}`;
-    }
-
-    // ✅ 반대 결 검색: 반대어 + 동일한 영어 계열
-    let contrastQuery = contrastKeyword;
-    if (entry.en) {
-      contrastQuery = `${contrastKeyword} ${entry.en}`;
-    }
+    // 🔹 키워드 칩: 최대 4개
+    const keywordChips = [
+      entry.ko,
+      entry.en,
+      entry.antonym,
+      entry.antonym2
+    ].filter(Boolean).slice(0, 4);
 
     return {
       primaryKeyword,
       contrastKeyword,
-      closeQuery,
-      contrastQuery,
+      keywordChips,
+      // ✅ App.jsx에서 사용하는 getContrastWord 함수
+      getContrastWord: (base) => {
+        return contrastKeyword || base;
+      }
     };
   }
 
-  // 사전에 없는 경우: 토큰이나 전체 문장에서 하나만 대표로 사용
-  const primaryKeyword =
-    (fallbackTokens && fallbackTokens[0]) || raw || "Cloud Dancer";
+  // 사전에 없는 경우: 입력 문장을 그대로 사용
+  const words = raw.split(/\s+/).filter(w => w.length > 1);
+  const primaryKeyword = words[0] || raw || "Cloud Dancer";
 
   return {
     primaryKeyword,
-    contrastKeyword: "다른 결의 키워드",
-    closeQuery: primaryKeyword, // 문장 전체 대신 대표 단어로
-    contrastQuery: primaryKeyword,
+    contrastKeyword: "",
+    keywordChips: words.slice(0, 4),
+    getContrastWord: (base) => base // 반대어 없음
   };
 }
-
