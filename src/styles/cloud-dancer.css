@@ -292,6 +292,39 @@ body {
   cursor: not-allowed;
 }
 
+/* ---------- SERVER STATUS ---------- */
+
+.cd-server-status {
+  margin-top: 12px;
+  font-size: 11px;
+  text-align: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.cd-server-status--waking {
+  color: #f59e0b;
+}
+
+.cd-server-status--waking::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: pulse 1s infinite;
+}
+
+.cd-server-status--ready {
+  color: #10b981;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
 /* ---------- PAGE 2: INSIDE (공통) ---------- */
 
 .cd-main--inside {

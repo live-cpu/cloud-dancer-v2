@@ -31,17 +31,44 @@ function App() {
   const forestTriggerRef = useRef(null);
   const lastSearchRef = useRef({ base: "", contrast: "" });
 
-  // -----------------------------------------------------------------
-  // [테스트용] 팝업 UI 확인용 코드
-  // 팝업이 잘 뜨는지 확인한 뒤에는 아래 useEffect 전체를 지우거나 주석 처리하세요.
-  // -----------------------------------------------------------------
-  /*
-  useEffect(() => {
-    setGlobalError("테스트 에러입니다. 이 창이 보이면 팝업 기능은 정상입니다.");
-  }, []);
-  */
-  // -----------------------------------------------------------------
+  // 서버 상태 (cold start 대응)
+  const [serverReady, setServerReady] = useState(false);
+  const [serverWaking, setServerWaking] = useState(false);
 
+  // [Warm-up] 페이지 로드 시 API 서버 깨우기 (Render cold start 대응)
+  useEffect(() => {
+    let cancelled = false;
+
+    async function warmUpServer() {
+      setServerWaking(true);
+      try {
+        // 가벼운 health check 요청으로 서버 깨우기
+        const res = await fetch(`${API_BASE_URL}/api/health`, {
+          method: "GET",
+          signal: AbortSignal.timeout(60000), // 최대 60초 대기
+        });
+        if (!cancelled && res.ok) {
+          setServerReady(true);
+        }
+      } catch (err) {
+        // health 엔드포인트가 없으면 search로 시도
+        try {
+          await fetch(`${API_BASE_URL}/api/search-artists?query=test`, {
+            method: "GET",
+            signal: AbortSignal.timeout(60000),
+          });
+          if (!cancelled) setServerReady(true);
+        } catch {
+          console.log("Server warm-up failed, will retry on search");
+        }
+      } finally {
+        if (!cancelled) setServerWaking(false);
+      }
+    }
+
+    warmUpServer();
+    return () => { cancelled = true; };
+  }, []);
 
   // [스크롤] 배경 전환 (구름 <-> 숲)
   useEffect(() => {
@@ -294,6 +321,12 @@ function App() {
                   <button type="submit" className="cd-btn-primary" disabled={!text.trim()}>
                     구름 속으로 보내기
                   </button>
+                  {serverWaking && (
+                    <p className="cd-server-status cd-server-status--waking">서버 연결 준비 중...</p>
+                  )}
+                  {serverReady && !serverWaking && (
+                    <p className="cd-server-status cd-server-status--ready">서버 연결됨 ✓</p>
+                  )}
                 </form>
               </div>
             </section>
@@ -333,7 +366,11 @@ function App() {
                 <p className="cd-inside-usertext">"{text}"</p>
                 <div className="cd-inside-artist">
                   <p className="cd-artist-label">비슷한 결을 가진 아티스트</p>
-                  {loadingClose && <p className="cd-artist-loading">작가를 찾는 중입니다…</p>}
+                  {loadingClose && (
+                    <p className="cd-artist-loading">
+                      {serverWaking ? "서버를 깨우는 중입니다… (최초 접속 시 30초~1분 소요)" : "작가를 찾는 중입니다…"}
+                    </p>
+                  )}
                   {!loadingClose && !mainArtist && <p className="cd-artist-desc">검색 결과가 없습니다.</p>}
                   {mainArtist && (
                     <>
